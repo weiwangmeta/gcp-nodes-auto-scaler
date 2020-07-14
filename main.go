@@ -130,6 +130,7 @@ func generateGCPNodeNames() {
                }
                buildBoxWithPrefix.WriteString(buildBox)
                buildBoxesJenkinsToGCPNameMap[buildBox] = buildBoxWithPrefix.String()
+               buildBoxWithPrefix.Reset()
        }
 }
 func validateFlags() {
