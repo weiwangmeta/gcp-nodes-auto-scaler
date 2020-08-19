@@ -232,7 +232,6 @@ func startCloudBox(buildBox string) {
         var buildBoxGCP string
         var ok bool
         buildBoxGCP, ok = buildBoxesJenkinsToGCPNameMap[buildBox]
-        fmt.Printf("startCloudBox buildBoxGCP ok %v %t\n", buildBoxGCP, ok)
         if ok != true {
                 log.Printf("Failed to find GCP node name\n")
                 return
@@ -441,7 +440,6 @@ func stopCloudBox(buildBox string) error {
         var buildBoxGCP string
         var ok bool
         buildBoxGCP, ok = buildBoxesJenkinsToGCPNameMap[buildBox]
-        fmt.Printf("stopCloudBox buildBoxGCP ok %v %t\n", buildBoxGCP, ok)
         if ok != true {
                 log.Printf("Failed to find GCP node name\n")
                 return errors.New("Node name map error")
@@ -625,7 +623,6 @@ func isCloudBoxRunning(buildBox string) bool {
         var buildBoxGCP string
         var ok bool
         buildBoxGCP, ok = buildBoxesJenkinsToGCPNameMap[buildBox]
-        fmt.Printf("isCloudBoxRunning buildBoxGCP ok %v %t\n", buildBoxGCP, ok)
         if ok != true {
                 log.Printf("Failed to find GCP node name\n")
                 return false
