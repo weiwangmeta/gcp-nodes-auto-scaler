@@ -5,7 +5,6 @@ import (
 	"log"
 	"time"
 
-	"encoding/json"
 	"errors"
 	"flag"
 	"golang.org/x/net/context"
@@ -13,30 +12,31 @@ import (
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/api/option"
 	"google.golang.org/api/transport"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"os"
-	"strings"
+	//"strings"
 	"sync"
+	"github.com/rockset/rockset-go-client"
+
 )
 
-type JenkinsQueue struct {
-	Items []struct {
-		Buildable bool   `json:"buildable"`
-		Why       string `json:"why"`
-		Task      struct {
-			Name string `json:"name"`
-		} `json:"task"`
-	} `json:"items"`
-}
+//type JenkinsQueue struct {
+//	Items []struct {
+//		Buildable bool   `json:"buildable"`
+//		Why       string `json:"why"`
+//		Task      struct {
+//			Name string `json:"name"`
+//		} `json:"task"`
+//	} `json:"items"`
+//}
 
-type JenkinsJob struct {
-	Color           string `json:"color"`
-	NextBuildNumber int    `json:"nextBuildNumber"`
-}
+//type JenkinsJob struct {
+//	Color           string `json:"color"`
+//	NextBuildNumber int    `json:"nextBuildNumber"`
+//}
 
-type JenkinsBuildBoxInfo struct {
+type GHARunnerInfo struct {
 	Idle               bool `json:"idle"`
 	TemporarilyOffline bool `json:"temporarilyOffline"`
 	Offline            bool `json:"offline"`
@@ -47,9 +47,6 @@ type JenkinsBuildBoxInfo struct {
 
 var gceProjectName *string
 var gceZone *string
-var jenkinsBaseUrl *string
-var jenkinsUsername *string
-var jenkinsApiToken *string
 var locationName *string
 var workersPerBuildBox *int
 var jobNameRequiringAllNodes *string
@@ -74,16 +71,13 @@ func main() {
 		}
 	}()
 
-	workersPerBuildBox = flag.Int("workersPerBuildBox", 2, "number of workers per build box")
-	localCreds := flag.Bool("useLocalCreds", false, "uses the local creds.json as credentials for Google Cloud APIs")
+	workersPerBuildBox = flag.Int("workersPerBuildBox", 1, "number of workers per build box")
+	localCreds := flag.Bool("useLocalCreds", true, "uses the local creds.json as credentials for Google Cloud APIs")
 	jobType := flag.String("jobType", "auto_scaling", "defines which job to execute: auto_scaling, all_up, all_down")
 	gceProjectName = flag.String("gceProjectName", "", "project name where nodes are setup in GCE")
-	gceZone = flag.String("gceZone", "europe-west1-b", "GCE zone where nodes have been setup")
-	locationName = flag.String("locationName", "Europe/London", "Location used to determine working hours")
-	jenkinsBaseUrl = flag.String("jenkinsBaseUrl", "", "Jenkins server base url")
-	jenkinsUsername = flag.String("jenkinsUsername", "", "Jenkins username")
-	jenkinsApiToken = flag.String("jenkinsApiToken", "", "Jenkins api token")
-	jobNameRequiringAllNodes = flag.String("jobNameRequiringAllNodes", "", "Jenkins job name which requires all build nodes enabled")
+	gceZone = flag.String("gceZone", "us-central1-a", "GCE zone where nodes have been setup")
+	locationName = flag.String("locationName", "US/Iowa", "Location used to determine working hours")
+	jobNameRequiringAllNodes = flag.String("jobNameRequiringAllNodes", "", "job name which requires all build nodes enabled")
 	preferredNodeToKeepOnline = flag.String("preferredNodeToKeepOnline", "", "name of the node that should be kept online")
 	flag.Parse()
 
@@ -123,18 +117,6 @@ func validateFlags() {
 		log.Println("gceProjectName flag should not be empty")
 		valid = false
 	}
-	if *jenkinsBaseUrl == "" {
-		log.Println("jenkinsBaseUrl flag should not be empty")
-		valid = false
-	}
-	if *jenkinsApiToken == "" {
-		log.Println("jenkinsApiToken flag should not be empty")
-		valid = false
-	}
-	if *jenkinsUsername == "" {
-		log.Println("jenkinsUsername flag should not be empty")
-		valid = false
-	}
 
 	if !valid {
 		os.Exit(1)
@@ -144,7 +126,7 @@ func validateFlags() {
 func autoScaling() {
 	for {
 		queueSize := fetchQueueSize()
-		queueSize = adjustQueueSizeDependingWhetherJobRequiringAllNodesIsRunning(queueSize)
+		//queueSize = adjustQueueSizeDependingWhetherJobRequiringAllNodesIsRunning(queueSize)
 
 		if queueSize > 0 {
 			log.Printf("%d jobs waiting to be executed\n", queueSize)
@@ -156,24 +138,28 @@ func autoScaling() {
 
 		log.Println("Iteration finished")
 		fmt.Println("")
-		time.Sleep(time.Second * 8)
+		time.Sleep(time.Second * 120)
 	}
 }
 
 func enableMoreNodes(queueSize int) {
 	boxesNeeded := calculateNumberOfNodesToEnable(queueSize)
-	log.Println("Checking if any box is offline")
+	log.Printf("%d runners needed", boxesNeeded)
+	log.Println("Checking if any runner is offline")
 	var wg sync.WaitGroup
 	buildBoxesPool = shuffle(buildBoxesPool)
+	log.Println(buildBoxesPool)
 	for _, buildBox := range buildBoxesPool {
-		if isNodeOffline(buildBox) {
+		log.Println(buildBox)
+		//if isNodeOffline(buildBox) 
+		{
 			wg.Add(1)
 			go func(b string) {
 				defer wg.Done()
 				enableNode(b)
 			}(buildBox)
 			boxesNeeded = boxesNeeded - 1
-			log.Printf("%d more boxes needed\n", boxesNeeded)
+			log.Printf("%d more runners needed\n", boxesNeeded)
 		}
 		if boxesNeeded <= 0 {
 			wg.Wait()
@@ -181,7 +167,7 @@ func enableMoreNodes(queueSize int) {
 		}
 	}
 	wg.Wait()
-	log.Println("No more build boxes available to start")
+	log.Println("No more runners available to start")
 }
 
 func shuffle(slice []string) []string {
@@ -196,24 +182,14 @@ func shuffle(slice []string) []string {
 }
 
 func enableNode(buildBox string) bool {
-	log.Printf("%s is offline, trying to toggle it online\n", buildBox)
-	if !isNodeTemporarilyOffline(buildBox) {
-		toggleNodeStatus(buildBox, "offline")
-	}
+	log.Printf("%s may be offline, trying to toggle it online\n", buildBox)
 	startCloudBox(buildBox)
-	agentLaunched := true
-	if !isAgentConnected(buildBox) {
-		agentLaunched = connectNodeAgent(buildBox)
-	}
-	if agentLaunched && isNodeTemporarilyOffline(buildBox) {
-		toggleNodeStatus(buildBox, "online")
-	}
-
-	return agentLaunched
+	return true
 }
 
 func startCloudBox(buildBox string) {
 	if isCloudBoxRunning(buildBox) {
+	  log.Printf("%s is already online, no op needed\n", buildBox)
 		return
 	}
 
@@ -242,7 +218,7 @@ func disableUnnecessaryBuildBoxes() {
 	other := "box"
 	if isWorkingHour() {
 		buildBoxToKeepOnline = keepOneBoxOnline()
-		other = "other box apart from " + buildBoxToKeepOnline
+		other = "other runner apart from " + buildBoxToKeepOnline
 	}
 
 	log.Printf("Checking if any %s is enabled and idle", other)
@@ -341,76 +317,15 @@ func disableNode(buildBox string) {
 	}
 
 	if !isNodeTemporarilyOffline(buildBox) {
-		log.Printf("%s is not offline, trying to toggle it offline\n", buildBox)
-		toggleNodeStatus(buildBox, "offline")
 
 		time.Sleep(2 * time.Second)
 		if !isNodeIdle(buildBox) {
 			log.Printf("%s accepted a new job in the meantime, aborting termination\n", buildBox)
-			toggleNodeStatus(buildBox, "online")
 			return
 		}
 	}
 
 	ensureCloudBoxIsNotRunning(buildBox)
-}
-
-func toggleNodeStatus(buildBox string, message string) error {
-	resp, err := jenkinsRequest("POST", "/computer/"+buildBox+"/toggleOffline")
-	defer closeResponseBody(resp)
-	if err == nil {
-		log.Printf("%s was toggled temporarily %s\n", buildBox, message)
-	}
-	return err
-}
-
-func connectNodeAgent(buildBox string) bool {
-	log.Printf("Agent was launched for %s, waiting for it to come online\n", buildBox)
-
-	quit := make(chan bool, 1)
-	online := make(chan bool, 1)
-	go func() {
-		counter := 0
-		for {
-			select {
-			case <-quit:
-				return
-			default:
-				if isAgentConnected(buildBox) {
-					time.Sleep(10 * time.Second)
-					if stillConnected := isAgentConnected(buildBox); !stillConnected {
-						log.Printf("Agent appeared to be connected for %s, but it disconnected shortly after\n", buildBox)
-					} else {
-						online <- true
-						return
-					}
-				}
-
-				if counter%10 == 0 {
-					launchNodeAgent(buildBox)
-				}
-			}
-			time.Sleep(time.Second)
-			counter += 1
-		}
-	}()
-
-	agentConnected := true
-	select {
-	case <-online:
-	case <-time.After(time.Second * 120):
-		quit <- true
-		agentConnected = false
-		log.Printf("Unable to launch the agent for %s successfully, shutting down", buildBox)
-		stopCloudBox(buildBox)
-	}
-
-	return agentConnected
-}
-
-func launchNodeAgent(buildBox string) {
-	resp, _ := jenkinsRequest("POST", "/computer/"+buildBox+"/launchSlaveAgent")
-	defer closeResponseBody(resp)
 }
 
 func stopCloudBox(buildBox string) error {
@@ -427,23 +342,6 @@ func stopCloudBox(buildBox string) error {
 	return nil
 }
 
-func isAgentConnected(buildBox string) bool {
-	resp, err := jenkinsRequest("GET", "/computer/"+buildBox+"/logText/progressiveHtml")
-	defer closeResponseBody(resp)
-	if err != nil {
-		return false
-	}
-
-	content, _ := ioutil.ReadAll(resp.Body)
-
-	s := string(content)
-	if len(s) > 37 && strings.Contains(string(s[len(s)-37:]), "successfully connected and online") {
-		return true
-	}
-
-	return false
-}
-
 func isNodeOffline(buildBox string) bool {
 	data := fetchNodeInfo(buildBox)
 
@@ -457,128 +355,90 @@ func isNodeTemporarilyOffline(buildBox string) bool {
 }
 
 func isNodeIdle(buildBox string) bool {
-	data := fetchNodeInfo(buildBox)
-
+	data := fetchNodeInfoFromRockset(buildBox)
+	log.Println("in isNodeIdle")
+	log.Println(data.Idle)
 	return data.Idle
 }
 
-func fetchNodeInfo(buildBox string) JenkinsBuildBoxInfo {
-	resp, err := jenkinsRequest("GET", "/computer/"+buildBox+"/api/json")
-	defer closeResponseBody(resp)
+func ExampleRockClient_query(runner string) GHARunnerInfo {
+	ctx := context.TODO()
+
+	rc, err := rockset.NewClient()
 	if err != nil {
-		log.Printf("Error deserialising Jenkins build box %s info API call: %s\n", buildBox, err.Error())
-		return JenkinsBuildBoxInfo{}
+		log.Fatal(err)
+	}
+	var data GHARunnerInfo
+	fmt.Printf("Current runner is: %s\n", runner)
+	var query_part1 string
+	query_part1  = "select job._event_time,    w.name as workflowName,    job.html_url as htmlUrl,    job.runner_name,    job.status from    commons.workflow_job job    join commons.workflow_run w on w.id = job.run_id where    job.runner_name like '"
+	var query_part2 string
+	query_part2 = "' order by    job._event_time DESC limit    1"
+	query_text := query_part1 + runner + query_part2
+	fmt.Printf("SQL Query is: %s\n", query_text)
+	r, err := rc.Query(ctx, query_text)
+//		option.WithWarnings(), option.WithRowLimit(10),
+//		option.WithParameter("label", "string", "QUERY_SUCCESS"))
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	decoder := json.NewDecoder(resp.Body)
-	var data JenkinsBuildBoxInfo
-	err = decoder.Decode(&data)
+	for _, c := range r.Results {
+		fmt.Printf("result: %s\n", c)
+                if (c["status"] == "completed") {
+                  //fmt.Printf("results: %f\n", c["count"])
+                  data.Idle = true 
+                  fmt.Printf("Runner %s Idle status is %v\n", runner, data.Idle)
+		}
+	}
+	return data
+}
+
+func fetchNodeInfoFromRockset(runner string) GHARunnerInfo {
+        return ExampleRockClient_query(runner)
+}
+
+func fetchNodeInfo(buildBox string) GHARunnerInfo {
+	return GHARunnerInfo{}
+
+	var data GHARunnerInfo
 
 	return data
 }
 
 func adjustQueueSizeDependingWhetherJobRequiringAllNodesIsRunning(queueSize int) int {
-	if *jobNameRequiringAllNodes == "" {
-		return queueSize
-	}
-
-	resp, err := jenkinsRequest("GET", "/job/"+*jobNameRequiringAllNodes+"/api/json")
-	defer closeResponseBody(resp)
-	if err != nil {
-		return queueSize
-	}
-
-	decoder := json.NewDecoder(resp.Body)
-	var data JenkinsJob
-	err = decoder.Decode(&data)
-
-	if data.NextBuildNumber != lastSeenBuildNumber && strings.HasSuffix(data.Color, "_anime") {
-		lastSeenBuildNumber = data.NextBuildNumber
-
-		log.Printf("Detected %s job, enable the whole pool\n", *jobNameRequiringAllNodes)
-		return *workersPerBuildBox * len(buildBoxesPool)
-	}
-
 	return queueSize
 }
 
+func get_qsize_RockClient_queryLambda() int {
+	ctx := context.TODO()
+
+	rc, err := rockset.NewClient()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	r, err := rc.ExecuteQueryLambda(ctx, "metrics", "queued_jobs_by_label" )
+	if err != nil {
+		log.Fatal(err)
+	}
+	var qsize int = 0
+	for _, c := range r.Results {
+		fmt.Printf("machine type: %s\n", c["machine_type"])
+		if (c["machine_type"] == "linux.gcp.a100.large") {
+		  //fmt.Printf("results: %f\n", c["count"])
+		  qsize = int(c["count"].(float64))
+		  fmt.Printf("queue size (int) is : %v\n", qsize)
+	        }
+	}
+
+	return qsize
+}
+
+
+
 func fetchQueueSize() int {
-	resp, err := jenkinsRequest("GET", "/queue/api/json")
-	defer closeResponseBody(resp)
-	if err != nil {
-		log.Printf("Error deserialising Jenkins queue API call: %s\n", err.Error())
-		return 0
-	}
-
-	decoder := json.NewDecoder(resp.Body)
-	var data JenkinsQueue
-	err = decoder.Decode(&data)
-	if err != nil {
-		log.Printf("Error deserialising Jenkins queue API call: %s\n", err.Error())
-		return 0
-	}
-	counter := 0
-	for _, i := range data.Items {
-		if i.Buildable && !strings.HasPrefix(i.Why, "There are no nodes with the label") {
-			counter = counter + 1
-		}
-	}
-
-	return counter
-}
-
-func jenkinsRequest(method string, path string) (*http.Response, error) {
-	req, err := http.NewRequest(method, strings.TrimRight(*jenkinsBaseUrl, "/")+path, nil)
-	req.SetBasicAuth(*jenkinsUsername, *jenkinsApiToken)
-	if method == "POST" {
-		crumb := jenkinsRequestCrumb()
-		if crumb != "0" {
-			req.Header.Add(strings.Split(crumb,":")[0],strings.Split(crumb,":")[1])
-		}
-	}
-
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		log.Printf("Error calling Jenkins API: %s\n", err.Error())
-		return resp, err
-	}
-
-	if resp.StatusCode == 401 {
-		panic("Failing authenticating to Jenkins, check user and api token provided")
-	}
-
-	return resp, nil
-}
-
-func closeResponseBody(response *http.Response) {
-	if response != nil && response.Body != nil {
-		if _, err := ioutil.ReadAll(response.Body); err != nil {
-			log.Println(err)
-		}
-		response.Body.Close()
-	}
-}
-
-func jenkinsRequestCrumb() string {
-	req, err := http.NewRequest("GET", strings.TrimRight(*jenkinsBaseUrl, "/")+"/crumbIssuer/api/xml?xpath=concat(//crumbRequestField,\":\",//crumb)", nil)
-	req.SetBasicAuth(*jenkinsUsername, *jenkinsApiToken)
-
-	resp, err := httpClient.Do(req)
-	defer closeResponseBody(resp)
-	if err != nil {
-		log.Printf("Error calling Jenkins Crumb API: %s\n", err.Error())
-		return "0"
-	}
-
-	if resp.StatusCode == 404 {
-		return "0"
-	}
-
-	if resp.StatusCode == 401 {
-		panic("Failing authenticating to Jenkins, check user and api token provided")
-	}
-	crumb, err := ioutil.ReadAll(resp.Body)
-	return string(crumb[:])
+	return get_qsize_RockClient_queryLambda()
 }
 
 func ensureCloudBoxIsNotRunning(buildBox string) {
@@ -594,12 +454,13 @@ func isCloudBoxRunning(buildBox string) bool {
 		log.Printf("Failed to get instance data: %v\n", err)
 		return false
 	}
-
+	log.Println(buildBox)
+	log.Println(i.Status)
 	return i.Status == "RUNNING"
 }
 
 func enableAllBuildBoxes() {
-	log.Println("Spinning up all build boxes specified")
+	log.Println("Spinning up all build runners specified")
 	var wg sync.WaitGroup
 	for _, buildBox := range buildBoxesPool {
 		if isNodeOffline(buildBox) {
@@ -614,16 +475,12 @@ func enableAllBuildBoxes() {
 }
 
 func disableAllBuildBoxes() {
-	log.Println("Terminating all build boxes specified")
+	log.Println("Terminating all build runners specified")
 	var wg sync.WaitGroup
 	for _, buildBox := range buildBoxesPool {
 		wg.Add(1)
 		go func(b string) {
 			defer wg.Done()
-			if !isNodeTemporarilyOffline(b) {
-				toggleNodeStatus(b, "offline")
-			}
-
 			ensureCloudBoxIsNotRunning(b)
 		}(buildBox)
 	}
