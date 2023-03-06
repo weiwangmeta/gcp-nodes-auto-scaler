@@ -425,7 +425,7 @@ func get_qsize_RockClient_queryLambda() int {
 	var qsize int = 0
 	for _, c := range r.Results {
 		fmt.Printf("machine type: %s\n", c["machine_type"])
-		if (c["machine_type"] == "linux.gcp.a100.large") {
+		if (c["machine_type"] == "linux.gcp.a100") {
 		  //fmt.Printf("results: %f\n", c["count"])
 		  qsize = int(c["count"].(float64))
 		  fmt.Printf("queue size (int) is : %v\n", qsize)
