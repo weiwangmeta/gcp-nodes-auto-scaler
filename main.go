@@ -137,8 +137,8 @@ func autoScaling() {
 		}
 
 		log.Println("Iteration finished")
-		fmt.Println("")
-		time.Sleep(time.Second * 120)
+		fmt.Println("Next Iteration in 10 minutes")
+		time.Sleep(time.Second * 600)
 	}
 }
 
