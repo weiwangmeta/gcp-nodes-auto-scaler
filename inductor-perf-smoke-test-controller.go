@@ -385,7 +385,7 @@ func isNodeIdle(runner string) bool {
 	    // Do not trust rockset and trust response instead
 	    // Otherwise if data.Idle is 
             if strings.Contains(response.StdOut, "busy") {
-	      fmt.Printf("Response received, setting Idle to false\n")
+	      fmt.Printf("Response received, setting Idle to false for runner %s\n", runner)
 	      data.Idle = false
 	    } else {
 	      fmt.Printf("Response does not seem to be busy, setting Idle to true for runner %s\n", runner)
