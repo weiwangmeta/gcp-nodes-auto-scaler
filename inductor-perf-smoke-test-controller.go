@@ -385,7 +385,6 @@ func isNodeIdle(buildBox string) bool {
 	  fmt.Printf("Response does not seem to be busy, setting Idle to true")
 	  data.Idle = true
 	}
-	data.Idle = false
 	log.Println(data.Idle)
 	return data.Idle
 }
