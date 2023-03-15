@@ -368,7 +368,9 @@ func isNodeIdle(runner string) bool {
         //  log.Fatal(err)
         //}
 	//fmt.Printf("The output is %s\n", s.Stdout())
+	var cmd_part1 string
 	cmd_part1 = "/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh "
+	var cmd_part2 string
 	cmd_part2 = " -- \" cat /tmp/runner_status \""
 	cmd_text := cmd_part1 + runner + cmd_part2
 	response := subprocess.RunShell("", "", cmd_text)
