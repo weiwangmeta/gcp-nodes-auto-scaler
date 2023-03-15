@@ -15,9 +15,12 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	//"strings"
+	"strings"
 	"sync"
 	"github.com/rockset/rockset-go-client"
+	//"os/exec"
+	//"github.com/estebangarcia21/subprocess"
+	"gopkg.in/go-rillas/subprocess.v1"
 
 )
 
@@ -355,8 +358,34 @@ func isNodeTemporarilyOffline(buildBox string) bool {
 }
 
 func isNodeIdle(buildBox string) bool {
-	data := fetchNodeInfoFromRockset(buildBox)
+	// Commenting out fetchNode from Rockset 
+	// Rely on runner info entirely
+	//data := fetchNodeInfoFromRockset(buildBox)
+	var data GHARunnerInfo
 	log.Println("in isNodeIdle")
+	//s := subprocess.New("/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh gh-ci-gcp-a100-4 -- \"cat /tmp/runner_status \"", subprocess.Shell)
+        //if err := s.Exec(); err != nil {
+        //  log.Fatal(err)
+        //}
+	//fmt.Printf("The output is %s\n", s.Stdout())
+	response := subprocess.RunShell("", "", "/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh gh-ci-gcp-a100-1 -- \"cat /tmp/runner_status \"")
+        // print the standard output stream data
+	fmt.Printf("Out: %s\n", response.StdOut)
+        // print the standard error stream data
+        fmt.Printf("Error %s\n", response.StdErr)
+        // print the exit status code integer value
+        fmt.Printf("ExitCode %d\n", response.ExitCode)
+	// If data.Idle is true, meaning rockset thinks the runner is idle
+	// Do not trust rockset and trust response instead
+	// Otherwise if data.Idle is 
+        if strings.Contains(response.StdOut, "busy") {
+	  fmt.Printf("Response received, setting Idle to false\n")
+	  data.Idle = false
+	} else {
+	  fmt.Printf("Response does not seem to be busy, setting Idle to true")
+	  data.Idle = true
+	}
+	data.Idle = false
 	log.Println(data.Idle)
 	return data.Idle
 }
