@@ -388,14 +388,13 @@ func isNodeIdle(runner string) bool {
 	      fmt.Printf("Response received, setting Idle to false\n")
 	      data.Idle = false
 	    } else {
-	      fmt.Printf("Response does not seem to be busy, setting Idle to true")
+	      fmt.Printf("Response does not seem to be busy, setting Idle to true for runner %s\n", runner)
 	      data.Idle = true
 	    }
         } else {
 	    fmt.Printf("Runner %s is not running, therefore data.Idle can be false (busy), no action needed\n", runner)
 	    data.Idle = false
 	}
-	log.Println(data.Idle)
 	return data.Idle
 }
 
