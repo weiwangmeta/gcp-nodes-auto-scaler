@@ -357,7 +357,7 @@ func isNodeTemporarilyOffline(buildBox string) bool {
 	return data.TemporarilyOffline
 }
 
-func isNodeIdle(buildBox string) bool {
+func isNodeIdle(runner string) bool {
 	// Commenting out fetchNode from Rockset 
 	// Rely on runner info entirely
 	//data := fetchNodeInfoFromRockset(buildBox)
@@ -368,7 +368,10 @@ func isNodeIdle(buildBox string) bool {
         //  log.Fatal(err)
         //}
 	//fmt.Printf("The output is %s\n", s.Stdout())
-	response := subprocess.RunShell("", "", "/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh gh-ci-gcp-a100-1 -- \"cat /tmp/runner_status \"")
+	cmd_part1 = "/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh "
+	cmd_part2 = " -- \" cat /tmp/runner_status \""
+	cmd_text := cmd_part1 + runner + cmd_part2
+	response := subprocess.RunShell("", "", cmd_text)
         // print the standard output stream data
 	fmt.Printf("Out: %s\n", response.StdOut)
         // print the standard error stream data
