@@ -373,22 +373,27 @@ func isNodeIdle(runner string) bool {
 	var cmd_part2 string
 	cmd_part2 = " -- \" cat /tmp/runner_status \""
 	cmd_text := cmd_part1 + runner + cmd_part2
-	response := subprocess.RunShell("", "", cmd_text)
-        // print the standard output stream data
-	fmt.Printf("Out: %s\n", response.StdOut)
-        // print the standard error stream data
-        fmt.Printf("Error %s\n", response.StdErr)
-        // print the exit status code integer value
-        fmt.Printf("ExitCode %d\n", response.ExitCode)
-	// If data.Idle is true, meaning rockset thinks the runner is idle
-	// Do not trust rockset and trust response instead
-	// Otherwise if data.Idle is 
-        if strings.Contains(response.StdOut, "busy") {
-	  fmt.Printf("Response received, setting Idle to false\n")
-	  data.Idle = false
-	} else {
-	  fmt.Printf("Response does not seem to be busy, setting Idle to true")
-	  data.Idle = true
+	if isCloudBoxRunning(runner) {
+	    response := subprocess.RunShell("", "", cmd_text)
+            // print the standard output stream data
+	    fmt.Printf("Out: Runner %s status %s\n", runner, response.StdOut)
+            // print the standard error stream data
+            //fmt.Printf("Error %s\n", response.StdErr)
+            // print the exit status code integer value
+            //fmt.Printf("ExitCode %d\n", response.ExitCode)
+	    // If data.Idle is true, meaning rockset thinks the runner is idle
+	    // Do not trust rockset and trust response instead
+	    // Otherwise if data.Idle is 
+            if strings.Contains(response.StdOut, "busy") {
+	      fmt.Printf("Response received, setting Idle to false\n")
+	      data.Idle = false
+	    } else {
+	      fmt.Printf("Response does not seem to be busy, setting Idle to true")
+	      data.Idle = true
+	    }
+        } else {
+	    fmt.Printf("Runner %s is not running, therefore data.Idle can be false (busy), no action needed\n", runner)
+	    data.Idle = false
 	}
 	log.Println(data.Idle)
 	return data.Idle
