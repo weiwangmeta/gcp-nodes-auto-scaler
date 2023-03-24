@@ -155,7 +155,7 @@ func enableMoreNodes(queueSize int) {
 	for _, buildBox := range buildBoxesPool {
 		log.Println(buildBox)
 		//if isNodeOffline(buildBox) 
-		{
+		if !isCloudBoxRunning(buildBox) {
 			wg.Add(1)
 			go func(b string) {
 				defer wg.Done()
@@ -372,7 +372,12 @@ func isNodeIdle(runner string) bool {
 	cmd_part1 = "/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh "
 	var cmd_part2 string
 	cmd_part2 = " -- \" cat /tmp/runner_status \""
+	//cmd_part2 = " -- \" cd ~/actions-runner;  sudo ./svc.sh status |grep runsvc.sh |tail -n 1 \""
 	cmd_text := cmd_part1 + runner + cmd_part2
+	// TODO: remember runner status by using a runner map 
+	// status [runner] = "Terminated"
+	// or status[runner] = "Running" to reduce API calls
+	// Set status in enable and disable node routines or core routines
 	if isCloudBoxRunning(runner) {
 	    response := subprocess.RunShell("", "", cmd_text)
             // print the standard output stream data
@@ -385,6 +390,7 @@ func isNodeIdle(runner string) bool {
 	    // Do not trust rockset and trust response instead
 	    // Otherwise if data.Idle is 
             if strings.Contains(response.StdOut, "busy") {
+            //if strings.Contains(response.StdOut, "Running") {
 	      fmt.Printf("Response received, setting Idle to false for runner %s\n", runner)
 	      data.Idle = false
 	    } else {
