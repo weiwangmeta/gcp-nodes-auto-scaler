@@ -141,6 +141,7 @@ func autoScaling() {
 
 		log.Println("Iteration finished")
 		fmt.Println("")
+		// 10 seconds sleep still causes early shutdown
 		time.Sleep(time.Second * 120)
 	}
 }
@@ -155,7 +156,7 @@ func enableMoreNodes(queueSize int) {
 	for _, buildBox := range buildBoxesPool {
 		log.Println(buildBox)
 		//if isNodeOffline(buildBox) 
-		{
+		if !isCloudBoxRunning(buildBox) {
 			wg.Add(1)
 			go func(b string) {
 				defer wg.Done()
@@ -314,8 +315,8 @@ func disableNode(buildBox string) {
 	lastStarted.RLock()
 	started := lastStarted.m[buildBox]
 	lastStarted.RUnlock()
-	if !started.IsZero() && started.Add(time.Minute*10).After(time.Now()) {
-		log.Printf("%s is idle but has been up for less than 10 minutes", buildBox)
+	if !started.IsZero() && started.Add(time.Minute*5).After(time.Now()) {
+		log.Printf("%s is idle but has been up for less than 5 minutes", buildBox)
 		return
 	}
 
@@ -372,7 +373,12 @@ func isNodeIdle(runner string) bool {
 	cmd_part1 = "/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh "
 	var cmd_part2 string
 	cmd_part2 = " -- \" cat /tmp/runner_status \""
+	//cmd_part2 = " -- \" cd ~/actions-runner;  sudo ./svc.sh status |grep runsvc.sh |tail -n 1 \""
 	cmd_text := cmd_part1 + runner + cmd_part2
+	// TODO: remember runner status by using a runner map 
+	// status [runner] = "Terminated"
+	// or status[runner] = "Running" to reduce API calls
+	// Set status in enable and disable node routines or core routines
 	if isCloudBoxRunning(runner) {
 	    response := subprocess.RunShell("", "", cmd_text)
             // print the standard output stream data
@@ -385,6 +391,7 @@ func isNodeIdle(runner string) bool {
 	    // Do not trust rockset and trust response instead
 	    // Otherwise if data.Idle is 
             if strings.Contains(response.StdOut, "busy") {
+            //if strings.Contains(response.StdOut, "Running") {
 	      fmt.Printf("Response received, setting Idle to false for runner %s\n", runner)
 	      data.Idle = false
 	    } else {
@@ -478,10 +485,33 @@ func fetchQueueSize() int {
 	return get_qsize_RockClient_queryLambda()
 }
 
-func ensureCloudBoxIsNotRunning(buildBox string) {
-	if isCloudBoxRunning(buildBox) {
-		log.Printf("%s is running... Stopping\n", buildBox)
-		stopCloudBox(buildBox)
+func ensureCloudBoxIsNotRunning(runner string) {
+	if isCloudBoxRunning(runner) {
+		log.Printf("%s is running... Stopping\n", runner)
+
+		log.Printf("First, run sudo ./svc.sh status on %s ...\n", runner)
+		var cmd_part1 string
+		cmd_part1 = "/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh "
+		var cmd_part2 string
+		cmd_part2 = " -- \" cd /home/weiwangmeta/actions-runner; sudo ./svc.sh status |grep runsvc.sh |tail -n 1 \" "
+		cmd_text := cmd_part1 + runner + cmd_part2
+		response := subprocess.RunShell("", "", cmd_text)
+		log.Printf("Runner %s response.StdOut is %s\n", runner, response.StdOut)
+
+		if !strings.Contains(response.StdOut, "completed with result") {
+		  if !strings.Contains(response.StdOut, "Listening for Jobs") {
+		    log.Printf("SVC.sh status on %s neither show completed job nor listening for jobs, aborting shutdown", runner)
+		    return
+	          }
+	        }
+
+		var shutdown_part2 string
+		shutdown_part2 = " -- \" cd /home/weiwangmeta/actions-runner; sudo ./svc.sh stop \" "
+		shutdown_text := cmd_part1 + runner + shutdown_part2
+		response_shutdown := subprocess.RunShell("", "", shutdown_text)
+		log.Printf("Runner %s svc.sh stop response.StdOut is %s\n", runner, response_shutdown.StdOut)
+
+		stopCloudBox(runner)
 	}
 }
 
