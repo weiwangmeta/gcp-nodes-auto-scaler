@@ -382,7 +382,7 @@ func isNodeIdle(runner string) bool {
 	if isCloudBoxRunning(runner) {
 	    response := subprocess.RunShell("", "", cmd_text)
             // print the standard output stream data
-	    fmt.Printf("Out: Runner %s status %s\n", runner, response.StdOut)
+	    fmt.Printf("Out: Runner %s status %s", runner, response.StdOut)
             // print the standard error stream data
             //fmt.Printf("Error %s\n", response.StdErr)
             // print the exit status code integer value
@@ -500,7 +500,7 @@ func ensureCloudBoxIsNotRunning(runner string) {
 
 		if !strings.Contains(response.StdOut, "completed with result") {
 		  if !strings.Contains(response.StdOut, "Listening for Jobs") {
-		    log.Printf("SVC.sh status on %s neither show completed job nor listening for jobs, aborting shutdown", runner)
+		    log.Printf("SVC.sh status on %s neither show completed job nor listening for jobs, it is likely running a job, aborting shutdown", runner)
 		    return
 	          }
 	        }
