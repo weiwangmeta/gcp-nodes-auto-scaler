@@ -15,9 +15,12 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	//"strings"
+	"strings"
 	"sync"
 	"github.com/rockset/rockset-go-client"
+	//"os/exec"
+	//"github.com/estebangarcia21/subprocess"
+	"gopkg.in/go-rillas/subprocess.v1"
 
 )
 
@@ -138,7 +141,8 @@ func autoScaling() {
 
 		log.Println("Iteration finished")
 		fmt.Println("")
-		time.Sleep(time.Second * 120)
+		// 10 seconds sleep still causes early shutdown
+		time.Sleep(time.Second * 600)
 	}
 }
 
@@ -152,7 +156,7 @@ func enableMoreNodes(queueSize int) {
 	for _, buildBox := range buildBoxesPool {
 		log.Println(buildBox)
 		//if isNodeOffline(buildBox) 
-		{
+		if !isCloudBoxRunning(buildBox) {
 			wg.Add(1)
 			go func(b string) {
 				defer wg.Done()
@@ -311,8 +315,8 @@ func disableNode(buildBox string) {
 	lastStarted.RLock()
 	started := lastStarted.m[buildBox]
 	lastStarted.RUnlock()
-	if !started.IsZero() && started.Add(time.Minute*10).After(time.Now()) {
-		log.Printf("%s is idle but has been up for less than 10 minutes", buildBox)
+	if !started.IsZero() && started.Add(time.Minute*5).After(time.Now()) {
+		log.Printf("%s is idle but has been up for less than 5 minutes", buildBox)
 		return
 	}
 
@@ -354,10 +358,50 @@ func isNodeTemporarilyOffline(buildBox string) bool {
 	return data.TemporarilyOffline
 }
 
-func isNodeIdle(buildBox string) bool {
-	data := fetchNodeInfoFromRockset(buildBox)
+func isNodeIdle(runner string) bool {
+	// Commenting out fetchNode from Rockset 
+	// Rely on runner info entirely
+	//data := fetchNodeInfoFromRockset(buildBox)
+	var data GHARunnerInfo
 	log.Println("in isNodeIdle")
-	log.Println(data.Idle)
+	//s := subprocess.New("/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh gh-ci-gcp-a100-4 -- \"cat /tmp/runner_status \"", subprocess.Shell)
+        //if err := s.Exec(); err != nil {
+        //  log.Fatal(err)
+        //}
+	//fmt.Printf("The output is %s\n", s.Stdout())
+	var cmd_part1 string
+	cmd_part1 = "/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh "
+	var cmd_part2 string
+	cmd_part2 = " -- \" cat /tmp/runner_status \""
+	//cmd_part2 = " -- \" cd ~/actions-runner;  sudo ./svc.sh status |grep runsvc.sh |tail -n 1 \""
+	cmd_text := cmd_part1 + runner + cmd_part2
+	// TODO: remember runner status by using a runner map 
+	// status [runner] = "Terminated"
+	// or status[runner] = "Running" to reduce API calls
+	// Set status in enable and disable node routines or core routines
+	if isCloudBoxRunning(runner) {
+	    response := subprocess.RunShell("", "", cmd_text)
+            // print the standard output stream data
+	    fmt.Printf("Out: Runner %s status %s\n", runner, response.StdOut)
+            // print the standard error stream data
+            //fmt.Printf("Error %s\n", response.StdErr)
+            // print the exit status code integer value
+            //fmt.Printf("ExitCode %d\n", response.ExitCode)
+	    // If data.Idle is true, meaning rockset thinks the runner is idle
+	    // Do not trust rockset and trust response instead
+	    // Otherwise if data.Idle is 
+            if strings.Contains(response.StdOut, "busy") {
+            //if strings.Contains(response.StdOut, "Running") {
+	      fmt.Printf("Response received, setting Idle to false for runner %s\n", runner)
+	      data.Idle = false
+	    } else {
+	      fmt.Printf("Response does not seem to be busy, setting Idle to true for runner %s\n", runner)
+	      data.Idle = true
+	    }
+        } else {
+	    fmt.Printf("Runner %s is not running, therefore data.Idle can be false (busy), no action needed\n", runner)
+	    data.Idle = false
+	}
 	return data.Idle
 }
 
@@ -425,7 +469,7 @@ func get_qsize_RockClient_queryLambda() int {
 	var qsize int = 0
 	for _, c := range r.Results {
 		fmt.Printf("machine type: %s\n", c["machine_type"])
-		if (c["machine_type"] == "linux.gcp.a100") {
+		if (c["machine_type"] == "linux.gcp.a100.large") {
 		  //fmt.Printf("results: %f\n", c["count"])
 		  qsize = int(c["count"].(float64))
 		  fmt.Printf("queue size (int) is : %v\n", qsize)
@@ -441,10 +485,33 @@ func fetchQueueSize() int {
 	return get_qsize_RockClient_queryLambda()
 }
 
-func ensureCloudBoxIsNotRunning(buildBox string) {
-	if isCloudBoxRunning(buildBox) {
-		log.Printf("%s is running... Stopping\n", buildBox)
-		stopCloudBox(buildBox)
+func ensureCloudBoxIsNotRunning(runner string) {
+	if isCloudBoxRunning(runner) {
+		log.Printf("%s is running... Stopping\n", runner)
+
+		log.Printf("First, run sudo ./svc.sh status on %s ...\n", runner)
+		var cmd_part1 string
+		cmd_part1 = "/data/home/weiwangmeta/tools/google-cloud-sdk/bin/gcloud compute ssh "
+		var cmd_part2 string
+		cmd_part2 = " -- \" cd /home/weiwangmeta/actions-runner; sudo ./svc.sh status |grep runsvc.sh |tail -n 1 \" "
+		cmd_text := cmd_part1 + runner + cmd_part2
+		response := subprocess.RunShell("", "", cmd_text)
+		log.Printf("Runner %s response.StdOut is %s\n", runner, response.StdOut)
+
+		if !strings.Contains(response.StdOut, "completed with result") {
+		  if !strings.Contains(response.StdOut, "Listening for Jobs") {
+		    log.Printf("SVC.sh status on %s neither show completed job nor listening for jobs, aborting shutdown", runner)
+		    return
+	          }
+	        }
+
+		var shutdown_part2 string
+		shutdown_part2 = " -- \" cd /home/weiwangmeta/actions-runner; sudo ./svc.sh stop \" "
+		shutdown_text := cmd_part1 + runner + shutdown_part2
+		response_shutdown := subprocess.RunShell("", "", shutdown_text)
+		log.Printf("Runner %s svc.sh stop response.StdOut is %s\n", runner, response_shutdown.StdOut)
+
+		stopCloudBox(runner)
 	}
 }
 
